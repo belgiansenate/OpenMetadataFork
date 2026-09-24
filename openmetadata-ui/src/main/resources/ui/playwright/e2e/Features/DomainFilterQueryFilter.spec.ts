@@ -104,8 +104,6 @@ const expectQueryVisibleForDomain = async (
 };
 
 test.describe('Domain Filter - User Behavior Tests', () => {
-  test.slow(true);
-
   test('Assets from selected domain should be visible in explore page', async ({
     page,
   }) => {
@@ -395,7 +393,7 @@ test.describe('Domain Filter - User Behavior Tests', () => {
 
       // Select SubDomain from navbar (requires expanding parent domain tree)
       await page.getByTestId('domain-dropdown').click();
-      await page.getByTestId('domain-selectable-tree').waitFor({
+      await page.getByTestId('domain-dropdown-search').waitFor({
         state: 'visible',
       });
 
@@ -404,23 +402,17 @@ test.describe('Domain Filter - User Behavior Tests', () => {
           response.url().includes('/api/v1/search/query') &&
           response.url().includes('index=domain')
       );
+      // Search the sub-domain directly; the server-side domain search returns
+      // sub-domains too, so no manual parent-tree expansion is needed.
       await page
-        .getByTestId('domain-selectable-tree')
-        .getByTestId('searchbar')
-        .fill(domain.responseData.displayName);
+        .getByTestId('domain-dropdown-search')
+        .fill(subDomain.responseData.name);
       await searchDomainRes6;
-
-      const parentDomainNode = page
-        .locator('.ant-tree-treenode')
-        .filter({ hasText: domain.responseData.displayName })
-        .first();
-
-      await parentDomainNode.locator('.ant-tree-switcher').click();
 
       await waitForAllLoadersToDisappear(page);
 
       const tagSelector6 = page.getByTestId(
-        `tag-${subDomain.responseData.fullyQualifiedName}`
+        `tree-node-${subDomain.responseData.fullyQualifiedName}`
       );
       await tagSelector6.waitFor({ state: 'visible' });
       await tagSelector6.click();
@@ -572,6 +564,7 @@ test.describe('Domain Filter - User Behavior Tests', () => {
   test('Quick filters should persist when domain filter is applied and cleared', async ({
     page,
   }) => {
+    test.slow();
     const { afterAction, apiContext } = await getApiContext(page);
     const domain = new Domain();
     const domainTable1 = new TableClass();
@@ -630,10 +623,10 @@ test.describe('Domain Filter - User Behavior Tests', () => {
       // Step 3: Clear domain filter by selecting "All Domains"
       await waitForAllLoadersToDisappear(page);
       await page.getByTestId('domain-dropdown').click();
-      await page.getByTestId('domain-selectable-tree').waitFor({
+      await page.getByTestId('domain-dropdown-search').waitFor({
         state: 'visible',
       });
-      await page.getByTestId('all-domains-selector').click();
+      await page.getByTestId('tree-node-All Domains').click();
       await waitForAllLoadersToDisappear(page);
 
       await verifyActiveDomainIsDefault(page);
@@ -812,6 +805,7 @@ test.describe('Domain Filter - User Behavior Tests', () => {
   test('Multi-nested domain hierarchy: filters should scope correctly at every level', async ({
     page,
   }) => {
+    test.slow();
     /**
      * Domain Hierarchy:
      * RootDomain
@@ -858,7 +852,7 @@ test.describe('Domain Filter - User Behavior Tests', () => {
       await page.getByTestId('drop-down-menu').waitFor({
         state: 'visible',
       });
-      const checkbox = page.getByTestId(`${tier}-checkbox`);
+      const checkbox = page.getByTestId('drop-down-menu').getByTestId(tier);
       await checkbox.waitFor({ state: 'visible' });
       await checkbox.click();
       const filterRes = page.waitForResponse(
@@ -881,7 +875,7 @@ test.describe('Domain Filter - User Behavior Tests', () => {
         .getByTestId('drop-down-menu')
         .getByTestId('search-input')
         .fill(searchTerm);
-      await page.getByRole('menuitem', { name: tagPattern }).click();
+      await page.getByRole('menuitemcheckbox', { name: tagPattern }).click();
       const filterRes = page.waitForResponse(
         '/api/v1/search/query?*index=all*'
       );
@@ -898,7 +892,9 @@ test.describe('Domain Filter - User Behavior Tests', () => {
       await page.getByTestId('drop-down-menu').waitFor({
         state: 'visible',
       });
-      const checkbox = page.getByTestId(`${entityType}-checkbox`);
+      const checkbox = page
+        .getByTestId('drop-down-menu')
+        .getByTestId(entityType);
       await checkbox.waitFor({ state: 'visible' });
       await checkbox.click();
       const filterRes = page.waitForResponse(

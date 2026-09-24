@@ -24,6 +24,7 @@ import {
   Skeleton,
   Typography,
 } from '@openmetadata/ui-core-components';
+import { Eye } from '@openmetadata/ui-core-components/icons';
 import { Check, ChevronRight } from '@untitledui/icons';
 import { AxiosError } from 'axios';
 import classNames from 'classnames';
@@ -43,7 +44,10 @@ import { formatBytes } from '../../../utils/ContextCenterPureUtils';
 import { getShortRelativeTime } from '../../../utils/date-time/DateTimeUtils';
 import { getEntityName } from '../../../utils/EntityNameUtils';
 import { showErrorToast, showSuccessToast } from '../../../utils/ToastUtils';
+import { PreviewRendererId } from '../../common/FilePreviewer/FilePreviewer.types';
+import { resolveRenderer } from '../../common/FilePreviewer/FilePreviewer.utils';
 import CopyLinkButton from '../../CopyLinkButton/CopyLinkButton.component';
+import DocumentStatusBadge from '../DocumentStatusBadge/DocumentStatusBadge.component';
 import {
   DocumentsViewProps,
   FileActionsProps,
@@ -443,28 +447,41 @@ const FileRow: FC<FileRowProps> = ({
   onDeleteFile,
   onDownload,
   onFileMoved,
+  onOpenPreview,
   onPreview,
   onSelectFile,
   onLoadMoreFolders,
 }) => {
   const { t } = useTranslation();
 
-  const { folderName, fileName, formattedFileSize, relativeTime, rowUrl } =
-    useMemo(() => {
-      const params = new URLSearchParams(window.location.search);
-      params.set('document', file.id);
-      const url = `${window.location.origin}${
-        window.location.pathname
-      }?${params.toString()}`;
+  const {
+    folderName,
+    fileName,
+    formattedFileSize,
+    relativeTime,
+    rowUrl,
+    isPreviewSupported,
+  } = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('document', file.id);
+    const url = `${window.location.origin}${
+      window.location.pathname
+    }?${params.toString()}`;
 
-      return {
-        folderName: getEntityName(file.folder),
-        fileName: getEntityName(file),
-        formattedFileSize: formatBytes(file.fileSize),
-        relativeTime: getShortRelativeTime(file.updatedAt),
-        rowUrl: url,
-      };
-    }, [file]);
+    return {
+      folderName: getEntityName(file.folder),
+      fileName: getEntityName(file),
+      formattedFileSize: formatBytes(file.fileSize),
+      relativeTime: getShortRelativeTime(file.updatedAt),
+      rowUrl: url,
+      isPreviewSupported:
+        resolveRenderer({
+          fileExtension: file.fileExtension,
+          fileType: file.fileType,
+          mimeType: file.contentType,
+        }) !== PreviewRendererId.Unsupported,
+    };
+  }, [file]);
 
   return (
     <Box
@@ -514,6 +531,17 @@ const FileRow: FC<FileRowProps> = ({
             size="text-xs">
             {formattedFileSize}
           </Typography>
+          {Boolean(file.memoryCount) && (
+            <>
+              <Dot className="tw:text-quaternary" size="micro" />
+              <Typography
+                className="tw:text-quaternary"
+                data-testid="document-memory-count"
+                size="text-xs">
+                {file.memoryCount} {t('label.memory-plural').toLowerCase()}
+              </Typography>
+            </>
+          )}
           {file.updatedBy && (
             <>
               <Dot className="tw:text-quaternary" size="micro" />
@@ -556,8 +584,22 @@ const FileRow: FC<FileRowProps> = ({
         gap={2}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}>
+        <DocumentStatusBadge
+          error={file.processingError}
+          stats={file.extractionStats}
+          status={file.processingStatus}
+        />
         <ButtonUtility
-          className="tw:ml-1.5"
+          className={`tw:ml-1.5${
+            isPreviewSupported ? '' : ' tw:invisible tw:pointer-events-none'
+          }`}
+          color="tertiary"
+          data-testid="preview-btn"
+          icon={<Eye height={20} width={20} />}
+          tooltip={t('label.preview')}
+          onClick={isPreviewSupported ? () => onOpenPreview?.(file) : undefined}
+        />
+        <ButtonUtility
           color="tertiary"
           data-testid="download-btn"
           icon={<DownloadIcon height={20} width={20} />}
@@ -613,6 +655,7 @@ const DocumentsView: FC<DocumentsViewProps> = ({
   onDeleteFile,
   onDownload,
   onFileMoved,
+  onOpenPreview,
   onPreview,
   onSelectFile,
   onScrollEnd,
@@ -636,6 +679,40 @@ const DocumentsView: FC<DocumentsViewProps> = ({
       onScrollEnd?.();
     }
   };
+
+  const emptyStateContent = selectedFolderName ? (
+    <div className="tw:relative tw:flex-1">
+      <EmptyPlaceholder
+        actions={
+          onUploadFile
+            ? [
+                {
+                  color: 'primary',
+                  key: 'upload-file',
+                  label: t('label.upload-file'),
+                  onClick: onUploadFile,
+                },
+              ]
+            : []
+        }
+        description={t('message.context-center-folder-empty-subtitle')}
+        icon={<UploadIcon className="tw:text-fg-brand-primary" />}
+        title={t('label.folder-name-is-empty', {
+          folderName: selectedFolderName,
+        })}
+        variant="blank"
+      />
+    </div>
+  ) : (
+    <div className="tw:relative tw:flex-1">
+      <EmptyPlaceholder
+        description={t('message.check-spelling-or-try-different-term')}
+        icon={<NoSearchResultIcon className="tw:text-quaternary" />}
+        title={t('label.no-matching-results')}
+        variant="blank"
+      />
+    </div>
+  );
 
   return (
     <Card
@@ -687,6 +764,7 @@ const DocumentsView: FC<DocumentsViewProps> = ({
                     onDownload={onDownload}
                     onFileMoved={onFileMoved}
                     onLoadMoreFolders={onLoadMoreFolders}
+                    onOpenPreview={onOpenPreview}
                     onPreview={onPreview}
                     onSelectFile={onSelectFile}
                   />
@@ -701,38 +779,8 @@ const DocumentsView: FC<DocumentsViewProps> = ({
             )}
           </Box>
         </Box>
-      ) : selectedFolderName ? (
-        <div className="tw:relative tw:flex-1">
-          <EmptyPlaceholder
-            actions={
-              onUploadFile
-                ? [
-                    {
-                      color: 'primary',
-                      key: 'upload-file',
-                      label: t('label.upload-file'),
-                      onClick: onUploadFile,
-                    },
-                  ]
-                : []
-            }
-            description={t('message.context-center-folder-empty-subtitle')}
-            icon={<UploadIcon className="tw:text-fg-brand-primary" />}
-            title={t('label.folder-name-is-empty', {
-              folderName: selectedFolderName,
-            })}
-            variant="blank"
-          />
-        </div>
       ) : (
-        <div className="tw:relative tw:flex-1">
-          <EmptyPlaceholder
-            description={t('message.check-spelling-or-try-different-term')}
-            icon={<NoSearchResultIcon className="tw:text-quaternary" />}
-            title={t('label.no-matching-results')}
-            variant="blank"
-          />
-        </div>
+        emptyStateContent
       )}
     </Card>
   );

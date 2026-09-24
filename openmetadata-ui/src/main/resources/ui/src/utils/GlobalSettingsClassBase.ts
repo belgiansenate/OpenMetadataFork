@@ -14,6 +14,7 @@ import { ReactComponent as AdminIcon } from '../assets/svg/admin-colored.svg';
 import { ReactComponent as APICollectionIcon } from '../assets/svg/api-collection-colored.svg';
 import { ReactComponent as APIEndpointIcon } from '../assets/svg/api-endpoints-colored.svg';
 import { ReactComponent as IconAPI } from '../assets/svg/apis-colored.svg';
+import { ReactComponent as AppModeIcon } from '../assets/svg/app-mode.svg';
 import { ReactComponent as ApplicationIcon } from '../assets/svg/application-colored.svg';
 import { ReactComponent as BotIcon } from '../assets/svg/bot-colored.svg';
 import { ReactComponent as ChartIcon } from '../assets/svg/chart-colored.svg';
@@ -79,7 +80,9 @@ import {
   ResourceEntity,
   UIPermission,
 } from '../context/PermissionProvider/PermissionProvider.interface';
+import { AuthProvider } from '../generated/settings/settings';
 import { userPermissions } from '../utils/PermissionsUtils';
+import { isLoginConfigurationApplicable } from './AuthProvider.util';
 import { t } from './i18next/LocalUtil';
 
 class GlobalSettingsClassBase {
@@ -154,11 +157,21 @@ class GlobalSettingsClassBase {
 
   /**
    * getSidebarItems
+   *
+   * `authProvider` gates the login configuration entry. It is optional so callers that only want
+   * another category keep working unchanged; omitting it leaves the entry visible, because showing
+   * an inert settings page is a cosmetic fault whereas hiding a live one takes working settings
+   * away from admins. The two pages that actually render the entry pass it.
    */
   public getGlobalSettingsMenuWithPermission(
     permissions: UIPermission,
-    isAdminUser?: boolean
+    isAdminUser?: boolean,
+    authProvider?: AuthProvider
   ): Array<SettingMenuItem> {
+    const isLoginConfigVisible =
+      authProvider === undefined ||
+      isLoginConfigurationApplicable(authProvider);
+
     return [
       {
         category: t('label.service-plural'),
@@ -411,7 +424,7 @@ class GlobalSettingsClassBase {
           {
             label: t('label.login-configuration'),
             description: t('message.page-sub-header-for-login-configuration'),
-            isProtected: Boolean(isAdminUser),
+            isProtected: Boolean(isAdminUser) && isLoginConfigVisible,
             key: `${GlobalSettingsMenuCategory.PREFERENCES}.${GlobalSettingOptions.LOGIN_CONFIGURATION}`,
             icon: LoginIcon,
           },
@@ -431,6 +444,13 @@ class GlobalSettingsClassBase {
             ),
             isProtected: Boolean(isAdminUser),
             key: `${GlobalSettingsMenuCategory.PREFERENCES}.${GlobalSettingOptions.PROFILER_CONFIGURATION}`,
+            icon: ProfilerConfigIcon,
+          },
+          {
+            label: t('label.data-quality'),
+            description: t('message.page-sub-header-for-data-quality-settings'),
+            isProtected: Boolean(isAdminUser),
+            key: `${GlobalSettingsMenuCategory.PREFERENCES}.${GlobalSettingOptions.DATA_QUALITY}`,
             icon: ProfilerConfigIcon,
           },
           {
@@ -679,6 +699,13 @@ class GlobalSettingsClassBase {
             isProtected: Boolean(isAdminUser),
             key: `${GlobalSettingsMenuCategory.PREFERENCES}.${GlobalSettingOptions.LEARNING_RESOURCES}`,
             icon: LearningIcon,
+          },
+          {
+            label: t('label.default-app-mode'),
+            description: t('message.default-app-mode-description'),
+            isProtected: Boolean(isAdminUser),
+            key: `${GlobalSettingsMenuCategory.PREFERENCES}.${GlobalSettingOptions.APP_MODE}`,
+            icon: AppModeIcon,
           },
         ],
       },

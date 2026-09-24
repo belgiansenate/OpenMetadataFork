@@ -262,16 +262,14 @@ test.describe(
         await page.getByTestId('add-domain').click();
         await waitForAllLoadersToDisappear(page);
 
-        // Verify checkboxes are NOT visible (single-select mode)
-        await expect(
-          page.locator('.domain-selectable-tree .ant-tree-checkbox')
-        ).toHaveCount(0);
+        // Verify checkboxes are NOT present (single-select mode)
+        await expect(page.locator('[data-testid^="checkbox-"]')).toHaveCount(0);
 
         // Close the selector by clicking outside
         await clickOutside(page);
 
         // Wait for domain selector to be fully closed
-        await page.getByTestId('domain-selectable-tree').waitFor({
+        await page.getByTestId('domain-selectable-tree-search').waitFor({
           state: 'detached',
         });
 
@@ -279,26 +277,32 @@ test.describe(
         await assignDomainWidget(page, testDomain1.responseData);
 
         // Verify first domain is visible
-        await expect(page.getByTestId('domain-link')).toContainText(
-          testDomain1.data.displayName
-        );
+        await expect(
+          page.getByTestId(
+            `domain-tag-${testDomain1.responseData.fullyQualifiedName}`
+          )
+        ).toBeVisible();
 
         // Assign second domain (should REPLACE first, not add to it)
         await assignDomainWidget(page, testDomain2.responseData, false, true);
 
         // Verify second domain is visible
-        await expect(page.getByTestId('domain-link')).toContainText(
-          testDomain2.data.displayName
-        );
+        await expect(
+          page.getByTestId(
+            `domain-tag-${testDomain2.responseData.fullyQualifiedName}`
+          )
+        ).toBeVisible();
 
         // Verify first domain is NOT visible (replaced, not added)
         // This confirms single-select mode is enforced by entity rules
-        await expect(page.getByTestId('domain-link')).not.toContainText(
-          testDomain1.data.displayName
-        );
+        await expect(
+          page.getByTestId(
+            `domain-tag-${testDomain1.responseData.fullyQualifiedName}`
+          )
+        ).not.toBeVisible();
 
-        // Verify no domain count button (only single domain, not multiple)
-        await expect(page.getByTestId('domain-count-button')).not.toBeVisible();
+        // Single domain assigned, so no overflow button.
+        await expect(page.getByTestId('show-all-domains')).not.toBeVisible();
       } finally {
         await testGlossaryTerm.delete(apiContext);
         await testGlossary.delete(apiContext);
@@ -321,6 +325,12 @@ test.describe(
     const sameDomainDataProduct = new DataProduct([assetDomain]);
     const otherDomainDataProduct = new DataProduct([productDomain]);
     const crossTable = new TableClass();
+    // Fixtures for the "Add Assets" picker test: a Data Product in
+    // productDomain, an asset in the same domain (must be offered) and an asset
+    // in a different domain (must be scoped out).
+    const pickerDataProduct = new DataProduct([productDomain]);
+    const sameDomainTable = new TableClass();
+    const otherDomainTable = new TableClass();
 
     test.beforeAll('Setup cross-domain data', async ({ browser }) => {
       const { apiContext, afterAction } = await performAdminLogin(browser);
@@ -329,11 +339,37 @@ test.describe(
       await sameDomainDataProduct.create(apiContext);
       await otherDomainDataProduct.create(apiContext);
       await crossTable.create(apiContext);
+      await pickerDataProduct.create(apiContext);
+      await sameDomainTable.create(apiContext);
+      await otherDomainTable.create(apiContext);
+      await sameDomainTable.patch({
+        apiContext,
+        patchData: [
+          {
+            op: 'add',
+            path: '/domains',
+            value: [{ id: productDomain.responseData.id, type: 'domain' }],
+          },
+        ],
+      });
+      await otherDomainTable.patch({
+        apiContext,
+        patchData: [
+          {
+            op: 'add',
+            path: '/domains',
+            value: [{ id: assetDomain.responseData.id, type: 'domain' }],
+          },
+        ],
+      });
       await afterAction();
     });
 
     test.afterAll('Cleanup cross-domain data', async ({ browser }) => {
       const { apiContext, afterAction } = await performAdminLogin(browser);
+      await otherDomainTable.delete(apiContext);
+      await sameDomainTable.delete(apiContext);
+      await pickerDataProduct.delete(apiContext);
       await crossTable.delete(apiContext);
       await sameDomainDataProduct.delete(apiContext);
       await otherDomainDataProduct.delete(apiContext);
@@ -390,6 +426,59 @@ test.describe(
       await otherSearchResponse;
 
       await expect(page.getByTestId(`tag-${otherDomainFqn}`)).not.toBeVisible();
+    });
+
+    // With the rule enabled, the "Add Assets" picker on a Data Product stays
+    // scoped to the Data Product's own domain, so an asset from a different
+    // domain is not offered (#32297).
+    test('should scope the Add Assets picker to the Data Product domain', async ({
+      page,
+    }) => {
+      await authenticateAdminPage(page);
+      await pickerDataProduct.visitEntityPage(page);
+
+      const initialSearch = page.waitForResponse(
+        '/api/v1/search/query?q=&index=all&*'
+      );
+      await page.getByTestId('data-product-details-add-button').click();
+      await initialSearch;
+
+      const drawer = page.getByTestId('asset-selection-modal');
+      await drawer.waitFor({ state: 'visible' });
+
+      const sameDomainName = sameDomainTable.entityResponseData.name;
+      const sameDomainFqn =
+        sameDomainTable.entityResponseData.fullyQualifiedName;
+      const otherDomainName = otherDomainTable.entityResponseData.name;
+      const otherDomainFqn =
+        otherDomainTable.entityResponseData.fullyQualifiedName;
+
+      // Positive control: an asset in the Data Product's domain is offered.
+      const sameDomainSearch = page.waitForResponse(
+        `/api/v1/search/query?q=${encodeURIComponent(
+          sameDomainName
+        )}&index=all&from=0&size=25&*`
+      );
+      await page.getByTestId('searchbar').fill(sameDomainName);
+      await sameDomainSearch;
+
+      await expect(
+        drawer.getByTestId(`table-data-card_${sameDomainFqn}`)
+      ).toBeVisible();
+
+      // Scoped to the Data Product's domain, so a cross-domain asset is not
+      // offered.
+      const otherDomainSearch = page.waitForResponse(
+        `/api/v1/search/query?q=${encodeURIComponent(
+          otherDomainName
+        )}&index=all&from=0&size=25&*`
+      );
+      await page.getByTestId('searchbar').fill(otherDomainName);
+      await otherDomainSearch;
+
+      await expect(
+        drawer.getByTestId(`table-data-card_${otherDomainFqn}`)
+      ).not.toBeVisible();
     });
   }
 );
