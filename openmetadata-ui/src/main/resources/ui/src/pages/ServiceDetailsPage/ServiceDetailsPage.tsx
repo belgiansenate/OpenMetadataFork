@@ -11,7 +11,8 @@
  *  limitations under the License.
  */
 
-import { Button, Col, Row, Tabs, TabsProps, Tooltip } from 'antd';
+import { Box, Button, Tabs, Tooltip } from '@openmetadata/ui-core-components';
+
 import { AxiosError } from 'axios';
 import { compare, Operation } from 'fast-json-patch';
 import { isEmpty, isUndefined, startCase, toString } from 'lodash';
@@ -32,8 +33,6 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import AirflowMessageBanner from '../../components/common/AirflowMessageBanner/AirflowMessageBanner';
-import ErrorPlaceHolder from '../../components/common/ErrorWithPlaceholder/ErrorPlaceHolder';
-import { PageLoader } from '../../components/common/Loader/Loader';
 import { PagingHandlerParams } from '../../components/common/NextPrevious/NextPrevious.interface';
 import TabsLabel from '../../components/common/TabsLabel/TabsLabel.component';
 import TestConnection from '../../components/common/TestConnection/TestConnection';
@@ -42,6 +41,8 @@ import { DataAssetsHeader } from '../../components/DataAssets/DataAssetsHeader/D
 import { DataAssetWithDomains } from '../../components/DataAssets/DataAssetsHeader/DataAssetsHeader.interface';
 import FilesTable from '../../components/DriveService/File/FilesTable/FilesTable';
 import SpreadsheetsTable from '../../components/DriveService/Spreadsheet/SpreadsheetsTable/SpreadsheetsTable';
+import EntityDetailsPageSkeleton from '../../components/Entity/EntityDetailsPageSkeleton/EntityDetailsPageSkeleton';
+import { useEntityExportModalProvider } from '../../components/Entity/EntityExportModalProvider/EntityExportModalProvider.component';
 import { EntityName } from '../../components/Modals/EntityNameModal/EntityNameModal.interface';
 import PageLayoutV1 from '../../components/PageLayoutV1/PageLayoutV1';
 import { useMetadataAgents } from '../../components/ServiceAgents/hooks/useMetadataAgents';
@@ -65,21 +66,20 @@ import {
 } from '../../constants/Services.constant';
 import { useAirflowStatus } from '../../context/AirflowStatusProvider/AirflowStatusProvider';
 import { usePermissionProvider } from '../../context/PermissionProvider/PermissionProvider';
-import {
-  OperationPermission,
-  ResourceEntity,
-} from '../../context/PermissionProvider/PermissionProvider.interface';
+import { OperationPermission } from '../../context/PermissionProvider/PermissionProvider.interface';
 import { ClientErrors } from '../../enums/Axios.enum';
-import { ERROR_PLACEHOLDER_TYPE } from '../../enums/common.enum';
 import {
   EntityTabs,
   EntityType,
   TabSpecificField,
 } from '../../enums/entity.enum';
+import { ResourceEntity } from '../../enums/permissions.enum';
 import { SearchIndex } from '../../enums/search.enum';
 import { ServiceAgentSubTabs, ServiceCategory } from '../../enums/service.enum';
 import { ServiceAttributes } from '../../generated/entity/services/serviceAttributes';
 
+import NoDataPlaceholder from '../../components/common/EmptyPlaceholder/NoDataPlaceholder';
+import PermissionPlaceholder from '../../components/common/EmptyPlaceholder/PermissionPlaceholder';
 import { Tag } from '../../generated/entity/classification/tag';
 import { Directory } from '../../generated/entity/data/directory';
 import { File } from '../../generated/entity/data/file';
@@ -107,6 +107,8 @@ import { usePaging } from '../../hooks/paging/usePaging';
 import { useApplicationStore } from '../../hooks/useApplicationStore';
 import { useFqn } from '../../hooks/useFqn';
 import { useTableFilters } from '../../hooks/useTableFilters';
+import { useVisitedTabs } from '../../hooks/useVisitedTabs';
+import { ServicePageData } from '../../interface/platform/service.interface';
 import { ConfigData, ServicesType } from '../../interface/service.interface';
 import { getApiCollections } from '../../rest/apiCollectionsAPI';
 import {
@@ -142,6 +144,10 @@ import {
   getWorkflowInstanceStateById,
 } from '../../rest/workflowAPI';
 import connectionsRouterClassBase from '../../utils/ConnectionsRouterClassBase';
+import {
+  DetailsTabItem,
+  getRenderedActiveTab,
+} from '../../utils/CustomizePage/CustomizePageEntityTabUtils';
 import { commonTableFields } from '../../utils/DatasetDetailsUtils';
 import {
   getCurrentMillis,
@@ -180,7 +186,6 @@ import { updateTierTag } from '../../utils/TagsPureUtils';
 import { showErrorToast, showSuccessToast } from '../../utils/ToastUtils';
 import { useRequiredParams } from '../../utils/useRequiredParams';
 import './service-details-page.less';
-import { ServicePageData } from './ServiceDetailsPage.interface';
 import ServiceMainTabContent from './ServiceMainTabContent';
 
 const CUSTOM_SERVICE_TYPES = new Set<string>([
@@ -221,6 +226,7 @@ const ServiceDetailsPage: FunctionComponent = () => {
   );
   const { getEntityPermissionByFqn, permissions } = usePermissionProvider();
   const navigate = useNavigate();
+  const { showModal } = useEntityExportModalProvider();
   const { isAdminUser } = useAuth();
   const ingestionPagingInfo = usePaging();
   const collateAgentPagingInfo = usePaging();
@@ -352,13 +358,11 @@ const ServiceDetailsPage: FunctionComponent = () => {
     () => serviceUtilClassBase.getAgentsTabWidgets(),
     []
   );
-  const isDBService = useMemo(
-    () => serviceCategory === ServiceCategory.DATABASE_SERVICES,
-    [serviceCategory]
-  );
+  // AutoPilot creates AI Automations for services of every type, so the widget is not limited
+  // to database services.
   const isCollateAIWidgetSupported = useMemo(
-    () => !isUndefined(CollateAIAgentsWidget) && isDBService,
-    [CollateAIAgentsWidget, isDBService]
+    () => !isUndefined(CollateAIAgentsWidget),
+    [CollateAIAgentsWidget]
   );
 
   const { searchValue, fileSearchValue, spreadSheetSearchValue } =
@@ -426,10 +430,18 @@ const ServiceDetailsPage: FunctionComponent = () => {
         decodedServiceFQN,
         servicePermission,
         serviceDetails,
-        navigate
+        navigate,
+        showModal,
+        tab
       ),
-    [servicePermission, decodedServiceFQN, serviceCategory, serviceDetails, tab]
-    // Don't remove the tab dependency, it's used to disable the PDF Export dropdown options
+    [
+      servicePermission,
+      decodedServiceFQN,
+      serviceCategory,
+      serviceDetails,
+      tab,
+      showModal,
+    ]
   );
 
   const handleShowDeleted = useCallback(
@@ -588,7 +600,10 @@ const ServiceDetailsPage: FunctionComponent = () => {
         setIsCollateAgentLoading(true);
         // AutoPilot creates at most one automation per template, so the list is
         // bounded and served in a single unpaginated fetch.
-        const { data } = await getAiAutomationsByService(decodedServiceFQN);
+        const { data } = await getAiAutomationsByService(
+          decodedServiceFQN,
+          getEntityTypeFromServiceCategory(serviceCategory)
+        );
 
         setCollateAgentsList(data);
         handleCollateAgentPagingChange({ total: data.length });
@@ -598,7 +613,12 @@ const ServiceDetailsPage: FunctionComponent = () => {
         setIsCollateAgentLoading(false);
       }
     },
-    [decodedServiceFQN, handleCollateAgentPagingChange, deleted]
+    [
+      decodedServiceFQN,
+      serviceCategory,
+      handleCollateAgentPagingChange,
+      deleted,
+    ]
   );
 
   const getAllIngestionWorkflows = useCallback(
@@ -1797,6 +1817,7 @@ const ServiceDetailsPage: FunctionComponent = () => {
           actions={
             <>
               <Tooltip
+                arrow
                 title={
                   flags.canEditAll
                     ? t('label.edit-entity', {
@@ -1805,11 +1826,11 @@ const ServiceDetailsPage: FunctionComponent = () => {
                     : t('message.no-permission-for-action')
                 }>
                 <Button
-                  ghost
+                  color="secondary"
                   data-testid="edit-connection-button"
-                  disabled={!flags.canEditAll}
-                  type="primary"
-                  onClick={goToEditConnection}>
+                  isDisabled={!flags.canEditAll}
+                  size="sm"
+                  onPress={goToEditConnection}>
                   {t('label.edit-entity', {
                     entity: t('label.connection'),
                   })}
@@ -1864,7 +1885,7 @@ const ServiceDetailsPage: FunctionComponent = () => {
     hostIp,
   ]);
 
-  const tabs: TabsProps['items'] = useMemo(() => {
+  const tabs: DetailsTabItem[] = useMemo(() => {
     const tabs = [];
     const ownerIds = serviceDetails?.owners?.map((owner) => owner.id) ?? [];
     const userOwnsService = ownerIds.includes(currentUser?.id ?? '');
@@ -1925,7 +1946,7 @@ const ServiceDetailsPage: FunctionComponent = () => {
 
     if (serviceCategory === ServiceCategory.DASHBOARD_SERVICES) {
       tabs.push({
-        name: t('label.data-model'),
+        name: t('label.data-model-plural'),
         key: EntityTabs.DATA_Model,
         count: dataModelPaging.total,
         children: (
@@ -2098,19 +2119,24 @@ const ServiceDetailsPage: FunctionComponent = () => {
     [serviceDetails.serviceType]
   );
 
+  const renderedActiveTab = getRenderedActiveTab(tabs, activeTab);
+  // Keeps drafts in visited tabs, e.g. unsaved service attributes on the connection tab.
+  const visitedTabs = useVisitedTabs(renderedActiveTab);
+
   if (isLoading) {
-    return <PageLoader />;
+    return <EntityDetailsPageSkeleton />;
   }
 
   if (!flags.hasViewAccess) {
     return (
-      <ErrorPlaceHolder
-        className="border-none"
-        permissionValue={t('label.view-entity', {
-          entity: `${getEntityName(serviceDetails)} ${t('label.service')}`,
-        })}
-        type={ERROR_PLACEHOLDER_TYPE.PERMISSION}
-      />
+      <div className="tw:relative tw:h-full tw:w-full tw:min-h-60 tw:rounded-xl tw:bg-surface">
+        <PermissionPlaceholder
+          data-testid="permission-error-placeholder"
+          permissionValue={t('label.view-entity', {
+            entity: `${getEntityName(serviceDetails)} ${t('label.service')}`,
+          })}
+        />
+      </div>
     );
   }
 
@@ -2119,12 +2145,18 @@ const ServiceDetailsPage: FunctionComponent = () => {
       className="service-details-page"
       pageTitle={getEntityName(serviceDetails)}>
       {isEmpty(serviceDetails) ? (
-        <ErrorPlaceHolder className="m-0 h-min-80">
-          {getEntityMissingError(serviceCategory as string, decodedServiceFQN)}
-        </ErrorPlaceHolder>
+        <div className="tw:relative tw:h-full tw:w-full tw:min-h-60 tw:rounded-xl tw:bg-surface">
+          <NoDataPlaceholder
+            data-testid="no-data-placeholder"
+            title={getEntityMissingError(
+              serviceCategory as string,
+              decodedServiceFQN
+            )}
+          />
+        </div>
       ) : (
-        <Row data-testid="service-page" gutter={[0, 12]}>
-          <Col span={24}>
+        <Box data-testid="service-page" direction="col" gap={3}>
+          <div>
             <DataAssetsHeader
               isRecursiveDelete
               afterDeleteAction={afterDeleteAction}
@@ -2148,18 +2180,31 @@ const ServiceDetailsPage: FunctionComponent = () => {
               onTierUpdate={handleUpdateTier}
               onVersionClick={versionHandler}
             />
-          </Col>
+          </div>
 
-          <Col className="entity-details-page-tabs" span={24}>
-            <Tabs
-              activeKey={activeTab}
-              className="tabs-new"
-              data-testid="tabs"
-              items={tabs}
-              onChange={activeTabHandler}
-            />
-          </Col>
-        </Row>
+          <Tabs
+            className="tw:gap-3"
+            data-testid="tabs"
+            selectedKey={renderedActiveTab}
+            onSelectionChange={(key) => activeTabHandler(String(key))}>
+            <Tabs.List size="sm" type="underline" variant="card">
+              {tabs.map(({ key, label }) => (
+                <Tabs.Item id={key} key={key}>
+                  {label}
+                </Tabs.Item>
+              ))}
+            </Tabs.List>
+            {tabs.map(({ key, children }) => (
+              <Tabs.Panel
+                className="tw:data-inert:hidden"
+                id={key}
+                key={key}
+                shouldForceMount={visitedTabs.has(key)}>
+                {children}
+              </Tabs.Panel>
+            ))}
+          </Tabs>
+        </Box>
       )}
     </PageLayoutV1>
   );

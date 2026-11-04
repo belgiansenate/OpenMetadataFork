@@ -18,16 +18,14 @@ import {
   Button,
   ButtonUtility,
   Card,
+  ConfirmPopover,
   DateRangePicker,
-  Dialog,
   Input,
-  Modal,
-  ModalOverlay,
   PaginationCardWithControls,
   ProgressBarBase,
   Typography,
 } from '@openmetadata/ui-core-components';
-import { SearchLg, XClose } from '@untitledui/icons';
+import { Search, XClose } from '@openmetadata/ui-core-components/icons';
 import { AxiosError } from 'axios';
 import { debounce, isString } from 'lodash';
 import { DateTime } from 'luxon';
@@ -53,6 +51,7 @@ import {
 } from '../../../../../../constants/constants';
 import { useWebSocketConnector } from '../../../../../../context/WebSocketProvider/WebSocketProvider';
 import { Paging } from '../../../../../../generated/type/paging';
+import { useHashPagingParams } from '../../../../../../hooks/useSettingsHash';
 import {
   exportAuditLogs,
   getAuditLogExportJob,
@@ -126,6 +125,16 @@ async function walkToPageCursor(
   return { cursor, discoveredCursors };
 }
 
+function resolvePageSize(hash: number | undefined): number {
+  return hash || PAGE_SIZE_MEDIUM;
+}
+
+// ADR:2026-10-31-paged-settings-lists-keep-pagination-at-non-default-page-size
+// A non-default page size keeps the control visible so the user can switch back.
+function shouldShowPagination(total: number | undefined, pageSize: number) {
+  return (total ?? 0) > pageSize || pageSize !== PAGE_SIZE_MEDIUM;
+}
+
 interface AccessControlAuditLogsPanelProps {
   /** Callback to inject action buttons into the page header. */
   onSetHeaderActions?: (actions: React.ReactNode) => void;
@@ -137,9 +146,17 @@ const AccessControlAuditLogsPanel: React.FC<
   const { t } = useTranslation();
   const { socket } = useWebSocketConnector();
 
+  const {
+    page: currentPage,
+    pageSize: hashPageSize,
+    cursor: hashCursor,
+    cursorType: hashCursorType,
+    setPage: setHashPage,
+  } = useHashPagingParams();
+  const pageSize = resolvePageSize(hashPageSize);
+
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [paging, setPaging] = useState<Paging>(INITIAL_PAGING);
-  const [currentPage, setCurrentPage] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
 
   // pageCursorsRef[N] = 'after' cursor returned when page N was fetched.
@@ -156,9 +173,9 @@ const AccessControlAuditLogsPanel: React.FC<
     {}
   );
   const filterParamsRef = useRef<Partial<AuditLogListParams>>({});
-  const [pageSize, setPageSize] = useState(PAGE_SIZE_MEDIUM);
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const exportButtonRef = useRef<HTMLButtonElement>(null);
   const [exportDateRange, setExportDateRange] = useState<{
     start: DateValue;
     end: DateValue;
@@ -166,6 +183,9 @@ const AccessControlAuditLogsPanel: React.FC<
   const [isExporting, setIsExporting] = useState(false);
   const [exportJob, setExportJob] = useState<ExportJob | null>(null);
   const exportJobRef = useRef<ExportJob | null>(null);
+  // Settles the popover's confirm once the export job ends; the job cannot be cancelled, so until
+  // then ConfirmPopover keeps the spinner on Export and Cancel/Escape disabled.
+  const settleExportRef = useRef<(keepOpen: boolean) => void>();
 
   const fetchAuditLogs = useCallback(
     async (
@@ -210,15 +230,28 @@ const AccessControlAuditLogsPanel: React.FC<
 
   useEffect(() => {
     pageCursorsRef.current = {};
-    setCurrentPage(1);
-    fetchAuditLogs({ after: undefined, before: undefined }, undefined, 1);
+    const canRestore = currentPage > 1 && hashCursor;
+
+    if (!canRestore) {
+      setHashPage(1, undefined, undefined, pageSize);
+    }
+    fetchAuditLogs(
+      canRestore
+        ? { [hashCursorType === 'before' ? 'before' : 'after']: hashCursor }
+        : { after: undefined, before: undefined },
+      undefined,
+      canRestore ? currentPage : 1
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchAuditLogs]);
 
-  const handlePageSizeChange = useCallback((size: number) => {
-    pageCursorsRef.current = {};
-    setPageSize(size);
-    setCurrentPage(1);
-  }, []);
+  const handlePageSizeChange = useCallback(
+    (size: number) => {
+      pageCursorsRef.current = {};
+      setHashPage(1, undefined, undefined, size);
+    },
+    [setHashPage]
+  );
 
   const handleFiltersChange = useCallback(
     (filters: AuditLogActiveFilter[], params: Partial<AuditLogListParams>) => {
@@ -226,10 +259,10 @@ const AccessControlAuditLogsPanel: React.FC<
       setActiveFilters(filters);
       setFilterParams(params);
       filterParamsRef.current = params;
-      setCurrentPage(1);
+      setHashPage(1, undefined, undefined, pageSize);
       fetchAuditLogs({ after: undefined, before: undefined }, params, 1);
     },
-    [fetchAuditLogs]
+    [fetchAuditLogs, setHashPage, pageSize]
   );
 
   const handleSearchChange = useCallback(
@@ -237,10 +270,10 @@ const AccessControlAuditLogsPanel: React.FC<
       pageCursorsRef.current = {};
       setSearchTerm(query);
       searchTermRef.current = query;
-      setCurrentPage(1);
+      setHashPage(1, undefined, undefined, pageSize);
       fetchAuditLogs({ after: undefined, before: undefined }, undefined, 1);
     },
-    [fetchAuditLogs]
+    [fetchAuditLogs, setHashPage, pageSize]
   );
 
   const [searchInputValue, setSearchInputValue] = useState('');
@@ -264,10 +297,10 @@ const AccessControlAuditLogsPanel: React.FC<
     filterParamsRef.current = {};
     setSearchTerm('');
     searchTermRef.current = '';
-    setCurrentPage(1);
+    setHashPage(1, undefined, undefined, pageSize);
     setSearchInputValue('');
     fetchAuditLogs({ after: undefined, before: undefined }, {}, 1);
-  }, [debouncedSearch, fetchAuditLogs]);
+  }, [debouncedSearch, fetchAuditLogs, setHashPage, pageSize]);
 
   const handleRemoveFilter = useCallback(
     (category: string) => {
@@ -277,10 +310,10 @@ const AccessControlAuditLogsPanel: React.FC<
       setActiveFilters(remaining);
       setFilterParams(params);
       filterParamsRef.current = params;
-      setCurrentPage(1);
+      setHashPage(1, undefined, undefined, pageSize);
       fetchAuditLogs({ after: undefined, before: undefined }, params, 1);
     },
-    [activeFilters, fetchAuditLogs]
+    [activeFilters, fetchAuditLogs, setHashPage, pageSize]
   );
 
   const walkToPage = useCallback(
@@ -322,7 +355,7 @@ const AccessControlAuditLogsPanel: React.FC<
 
           setLogs(response.data);
           setPaging(response.paging ?? INITIAL_PAGING);
-          setCurrentPage(newPage);
+          setHashPage(newPage, undefined, cursor, pageSize);
 
           if (response.paging?.after) {
             pageCursorsRef.current[newPage] = response.paging.after;
@@ -337,7 +370,7 @@ const AccessControlAuditLogsPanel: React.FC<
         }
       }
     },
-    [pageSize]
+    [pageSize, setHashPage]
   );
 
   const handlePageChange = useCallback(
@@ -348,7 +381,7 @@ const AccessControlAuditLogsPanel: React.FC<
 
       if (newPage === 1) {
         pageCursorsRef.current = {};
-        setCurrentPage(1);
+        setHashPage(1, undefined, undefined, pageSize);
         fetchAuditLogs({ after: undefined, before: undefined }, undefined, 1);
 
         return;
@@ -357,7 +390,7 @@ const AccessControlAuditLogsPanel: React.FC<
       // Direct jump: we already have the cursor for page newPage-1
       const cachedCursor = pageCursorsRef.current[newPage - 1];
       if (cachedCursor) {
-        setCurrentPage(newPage);
+        setHashPage(newPage, undefined, cachedCursor, pageSize);
         fetchAuditLogs({ after: cachedCursor }, undefined, newPage);
 
         return;
@@ -383,7 +416,7 @@ const AccessControlAuditLogsPanel: React.FC<
 
       walkToPage(startCursor, startPage, newPage);
     },
-    [currentPage, fetchAuditLogs, walkToPage]
+    [currentPage, fetchAuditLogs, walkToPage, setHashPage, pageSize]
   );
 
   const handleExportDownload = useCallback((data: string) => {
@@ -541,7 +574,8 @@ const AccessControlAuditLogsPanel: React.FC<
       <Button
         color="primary"
         data-testid="export-audit-logs-button"
-        iconLeading={<ExportIcon height={16} width={16} />}
+        iconLeading={ExportIcon}
+        ref={exportButtonRef}
         onPress={() => setIsExportModalOpen(true)}>
         {t('label.export')}
       </Button>
@@ -552,9 +586,16 @@ const AccessControlAuditLogsPanel: React.FC<
     };
   }, [onSetHeaderActions, t]);
 
+  useEffect(() => {
+    if (!isExporting) {
+      settleExportRef.current?.(false);
+      settleExportRef.current = undefined;
+    }
+  }, [isExporting]);
+
   const handleExport = useCallback(async () => {
     if (!exportDateRange) {
-      return;
+      return false;
     }
 
     setIsExporting(true);
@@ -580,6 +621,8 @@ const AccessControlAuditLogsPanel: React.FC<
       showErrorToast(error as AxiosError);
       setIsExporting(false);
     }
+
+    return true;
   }, [exportDateRange, searchTerm, filterParams]);
 
   const handleExportModalClose = useCallback(() => {
@@ -626,7 +669,9 @@ const AccessControlAuditLogsPanel: React.FC<
       data-testid="audit-logs-page"
       direction="col">
       {/* Card wrapping filters + log list */}
-      <Card className="tw:flex-1 tw:min-h-0 tw:flex tw:flex-col tw:overflow-hidden tw:mb-3">
+      <Card
+        className="tw:flex-1 tw:min-h-0 tw:flex tw:flex-col tw:overflow-hidden tw:mb-3"
+        variant="muted">
         {/* Filters row inside card */}
         <Box
           className="tw:shrink-0 tw:p-4 tw:border-b tw:border-secondary"
@@ -637,7 +682,7 @@ const AccessControlAuditLogsPanel: React.FC<
               data-testid="audit-log-search-container">
               <Input
                 className="tw:max-w-86"
-                icon={SearchLg as React.FC}
+                icon={Search as React.FC}
                 inputDataTestId="audit-log-search"
                 placeholder={t('label.search-audit-logs')}
                 value={searchInputValue}
@@ -679,7 +724,7 @@ const AccessControlAuditLogsPanel: React.FC<
                         <Typography
                           ellipsis
                           as="p"
-                          className="tw:text-brand-600"
+                          className="tw:text-utility-brand-600"
                           title={filter.value.label}
                           weight="medium">
                           {filter.value.label}
@@ -688,9 +733,9 @@ const AccessControlAuditLogsPanel: React.FC<
                     </Box>
                     <ButtonUtility
                       aria-label={t('label.remove-filter')}
-                      color="tertiary"
                       data-testid={`remove-filter-${filter.category}`}
-                      icon={<XClose size={14} />}
+                      icon={XClose}
+                      size="xs"
                       onClick={() => handleRemoveFilter(filter.category)}
                     />
                   </Badge>
@@ -709,7 +754,9 @@ const AccessControlAuditLogsPanel: React.FC<
         </Box>
 
         {/* Log list inside card */}
-        <Box className="tw:flex-1 tw:min-h-0 tw:overflow-auto tw:relative">
+        <Box
+          className="tw:flex-1 tw:min-h-0 tw:overflow-auto tw:relative"
+          direction="col">
           <AuditLogList
             hasActiveFilters={hasActiveFiltersOnly}
             hasActiveSearch={hasActiveSearch}
@@ -720,7 +767,7 @@ const AccessControlAuditLogsPanel: React.FC<
         </Box>
 
         {/* Pagination inside card */}
-        {(paging.total ?? 0) > pageSize && (
+        {shouldShowPagination(paging.total, pageSize) && (
           <Box className="tw:shrink-0 tw:border-t tw:border-secondary">
             <PaginationCardWithControls
               page={currentPage}
@@ -738,80 +785,71 @@ const AccessControlAuditLogsPanel: React.FC<
         )}
       </Card>
 
-      {/* Export modal */}
-      <ModalOverlay
-        isDismissable={!isExporting}
-        isOpen={isExportModalOpen}
-        onOpenChange={(open) => !open && handleExportModalClose()}>
-        <Modal>
-          <Dialog
-            data-testid="export-audit-logs-modal"
-            showCloseButton={!isExporting}
-            title={t('label.export-entity', {
-              entity: t('label.audit-log-plural'),
-            })}
-            onClose={handleExportModalClose}>
-            <Dialog.Content>
-              <Typography as="p" size="text-md">
-                {t('message.export-audit-logs-description')}
+      {/* Anchored to the header's Export button; the popover stays open while the export runs. */}
+      <ConfirmPopover
+        asForm
+        className="tw:w-96"
+        confirmText={t('label.export')}
+        content={
+          <>
+            <Box direction="col" gap={2}>
+              <Typography as="p" className="tw:text-tertiary" size="text-md">
+                {`${t('label.date-range')} *`}
               </Typography>
-              <Box direction="col" gap={2}>
-                <Typography as="p" className="tw:text-tertiary" size="text-md">
-                  {`${t('label.date-range')} *`}
-                </Typography>
-                {/*
-                 * @internationalized/date is externalized in ui-core-components but resolves to a
-                 * different patch version (3.12.0) than the one openmetadata-ui locks to (3.12.1).
-                 * TypeScript therefore treats CalendarDate / DateValue from each copy as distinct
-                 * nominal types even though they are structurally identical. Cast until both
-                 * packages resolve the same version.
-                 */}
-                <DateRangePicker
-                  data-testid="export-date-range-picker"
-                  isDisabled={isExporting}
-                  maxValue={
-                    today(getLocalTimeZone()) as unknown as Parameters<
-                      typeof DateRangePicker
-                    >[0]['maxValue']
-                  }
-                  value={
-                    exportDateRange as unknown as Parameters<
-                      typeof DateRangePicker
-                    >[0]['value']
-                  }
-                  onChange={(range) =>
-                    setExportDateRange(
-                      range
-                        ? {
-                            start: range.start as unknown as DateValue,
-                            end: range.end as unknown as DateValue,
-                          }
-                        : null
-                    )
-                  }
-                />
-              </Box>
-              {renderExportProgress()}
-              {renderExportResult()}
-            </Dialog.Content>
-            <Dialog.Footer>
-              <Button
-                color="tertiary"
+              {/*
+               * @internationalized/date is externalized in ui-core-components but resolves to a
+               * different patch version (3.12.0) than the one openmetadata-ui locks to (3.12.1).
+               * TypeScript therefore treats CalendarDate / DateValue from each copy as distinct
+               * nominal types even though they are structurally identical. Cast until both
+               * packages resolve the same version.
+               */}
+              <DateRangePicker
+                data-testid="export-date-range-picker"
                 isDisabled={isExporting}
-                onPress={handleExportModalClose}>
-                {t('label.cancel')}
-              </Button>
-              <Button
-                color="primary"
-                isDisabled={isExporting || !exportDateRange}
-                isLoading={isExporting}
-                onPress={handleExport}>
-                {t('label.export')}
-              </Button>
-            </Dialog.Footer>
-          </Dialog>
-        </Modal>
-      </ModalOverlay>
+                maxValue={
+                  today(getLocalTimeZone()) as unknown as Parameters<
+                    typeof DateRangePicker
+                  >[0]['maxValue']
+                }
+                value={
+                  exportDateRange as unknown as Parameters<
+                    typeof DateRangePicker
+                  >[0]['value']
+                }
+                onChange={(range) =>
+                  setExportDateRange(
+                    range
+                      ? {
+                          start: range.start as unknown as DateValue,
+                          end: range.end as unknown as DateValue,
+                        }
+                      : null
+                  )
+                }
+              />
+            </Box>
+            {renderExportProgress()}
+            {renderExportResult()}
+          </>
+        }
+        data-testid="export-audit-logs-popover"
+        description={t('message.export-audit-logs-description')}
+        isConfirmDisabled={!exportDateRange}
+        isOpen={isExportModalOpen}
+        title={t('label.export-entity', {
+          entity: t('label.audit-log-plural'),
+        })}
+        triggerRef={exportButtonRef}
+        variant="primary"
+        // A completed export closes the popover through isOpen; a failed one stays open on its error.
+        onConfirm={() =>
+          new Promise<boolean>((resolve) => {
+            settleExportRef.current = resolve;
+            handleExport().then((started) => !started && resolve(false));
+          })
+        }
+        onOpenChange={(open) => !open && handleExportModalClose()}
+      />
     </Box>
   );
 };

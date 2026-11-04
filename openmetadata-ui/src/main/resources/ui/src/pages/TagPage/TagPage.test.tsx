@@ -56,11 +56,53 @@ jest.mock('../../hooks/useEntityPermissions/useEntityPermissions', () => ({
 }));
 
 jest.mock('@openmetadata/ui-core-components', () => ({
+  Badge: jest.requireActual('@openmetadata/ui-core-components').Badge,
+  Box: jest.requireActual('@openmetadata/ui-core-components').Box,
+  Tabs: jest.requireActual('@openmetadata/ui-core-components').Tabs,
+  Divider: jest.requireActual('@openmetadata/ui-core-components').Divider,
+  Breadcrumbs: jest
+    .fn()
+    .mockImplementation(
+      ({
+        items,
+        'data-testid': testId,
+      }: {
+        items: { id: string; label: string }[];
+        'data-testid'?: string;
+      }) => (
+        <nav data-testid={testId}>
+          {items.map((item) => (
+            <span key={item.id}>{item.label}</span>
+          ))}
+        </nav>
+      )
+    ),
+  Dropdown: {
+    Root: jest.fn().mockImplementation(({ children }) => <div>{children}</div>),
+    Popover: jest.fn().mockImplementation(() => null),
+    Menu: jest.fn().mockImplementation(() => null),
+    Item: jest.fn().mockImplementation(() => null),
+  },
+  PageHeader: jest
+    .fn()
+    .mockImplementation(
+      ({ actions, breadcrumb, title, 'data-testid': testId }) => (
+        <div data-testid={testId}>
+          {breadcrumb}
+          {title}
+          {actions}
+        </div>
+      )
+    ),
   Button: jest
     .fn()
-    .mockImplementation(({ children, onClick }) => (
-      <button onClick={onClick}>{children}</button>
-    )),
+    .mockImplementation(
+      ({ children, onClick, onPress, 'data-testid': testId }) => (
+        <button data-testid={testId} onClick={onClick ?? onPress}>
+          {children}
+        </button>
+      )
+    ),
   ButtonUtility: jest
     .fn()
     .mockImplementation(
@@ -193,7 +235,7 @@ jest.mock(
       updateFeed: jest.fn(),
     }),
     __esModule: true,
-    default: ({ children }) => <>{children}</>,
+    default: ({ children }: React.PropsWithChildren) => <>{children}</>,
   })
 );
 
@@ -228,10 +270,8 @@ jest.mock('../../components/common/ResizablePanels/ResizablePanels', () => {
 });
 
 jest.mock(
-  '../../components/Entity/EntityHeader/EntityHeader.component',
-  () => ({
-    EntityHeader: jest.fn().mockImplementation(() => <div>EntityHeader</div>),
-  })
+  '../../components/Entity/EntityHeaderTitle/EntityHeaderTitle.component',
+  () => jest.fn().mockImplementation(() => <div>EntityHeader</div>)
 );
 
 jest.mock(
@@ -259,10 +299,6 @@ jest.mock(
   }
 );
 
-jest.mock('../../components/Modals/StyleModal/StyleModal.component', () => {
-  return jest.fn().mockImplementation(() => <div>StyleModal</div>);
-});
-
 jest.mock('../../components/Modals/IconColorModal/IconColorModal', () => {
   return jest.fn().mockImplementation(() => <div>IconColorModal</div>);
 });
@@ -274,6 +310,26 @@ jest.mock(
       .fn()
       .mockImplementation(() => <div>AssetSelectionModal</div>),
   })
+);
+
+const mockGenericProvider = jest.fn();
+
+jest.mock(
+  '../../components/Customization/GenericProvider/GenericProvider',
+  () => {
+    const actual = jest.requireActual(
+      '../../components/Customization/GenericProvider/GenericProvider'
+    );
+
+    return {
+      ...actual,
+      GenericProvider: (props: { permissions: unknown }) => {
+        mockGenericProvider(props.permissions);
+
+        return actual.GenericProvider(props);
+      },
+    };
+  }
 );
 
 describe('TagPage', () => {
@@ -297,6 +353,19 @@ describe('TagPage', () => {
         expect.any(String)
       );
     });
+  });
+
+  it('should render the header breadcrumb ending with the current tag', async () => {
+    (useFqn as jest.Mock).mockReturnValue({ fqn: 'PII.NonSensitive' });
+
+    render(<TagPage />);
+
+    const header = await screen.findByTestId('data-classification');
+    const breadcrumb = await screen.findByTestId('breadcrumb');
+
+    expect(header).toContainElement(breadcrumb);
+    expect(breadcrumb).toHaveTextContent('label.classification-plural');
+    expect(breadcrumb).toHaveTextContent('NonSensitive');
   });
 
   it('should call getTagData and fetchClassificationTagAssets when tagFqn changes', async () => {
@@ -424,6 +493,49 @@ describe('TagPage', () => {
       expect(
         screen.queryByTestId('data-classification-add-button')
       ).not.toBeInTheDocument();
+    });
+
+    it('denies owner and domain edits on a disabled tag even with EditDomains', async () => {
+      setMockTagPermissions({
+        EditAll: true,
+        EditOwners: true,
+        EditDomains: true,
+      });
+      (getTagByFqn as jest.Mock).mockResolvedValueOnce({
+        id: 'tag-id',
+        name: 'NonSensitive',
+        fullyQualifiedName: 'PII.NonSensitive',
+        disabled: true,
+      });
+
+      render(<TagPage />);
+
+      await waitFor(() => {
+        expect(mockGenericProvider).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            EditAll: false,
+            EditOwners: false,
+            EditDomains: false,
+          })
+        );
+      });
+    });
+
+    it('keeps an explicit EditDomains deny on an enabled tag with EditAll', async () => {
+      setMockTagPermissions({ EditAll: true, EditDomains: false });
+      (getTagByFqn as jest.Mock).mockResolvedValueOnce({
+        id: 'tag-id',
+        name: 'NonSensitive',
+        fullyQualifiedName: 'PII.NonSensitive',
+      });
+
+      render(<TagPage />);
+
+      await waitFor(() => {
+        expect(mockGenericProvider).toHaveBeenLastCalledWith(
+          expect.objectContaining({ EditAll: true, EditDomains: false })
+        );
+      });
     });
   });
 });

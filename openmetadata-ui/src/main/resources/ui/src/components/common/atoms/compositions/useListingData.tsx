@@ -11,9 +11,15 @@
  *  limitations under the License.
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useIsRouteVisible } from '../../../../context/RouteVisibilityProvider/RouteVisibilityProvider';
 import { SearchIndex } from '../../../../enums/search.enum';
 import { useQuickFilterLabels } from '../../../../hooks/useQuickFilterLabels';
+import { useSearchStore } from '../../../../hooks/useSearchStore';
+import {
+  SearchIndexValue,
+  SearchResponse,
+} from '../../../../interface/search.interface';
 import { getAggregations } from '../../../../utils/ExplorePureUtils';
 import { ExploreQuickFilterField } from '../../../Explore/ExplorePage.interface';
 import { useDataFetching } from '../data/useDataFetching';
@@ -22,8 +28,9 @@ import { useUrlState } from '../data/useUrlState';
 import { usePaginationState } from '../pagination/usePaginationState';
 import { CellRenderer, ColumnConfig, ListingData } from '../shared/types';
 import { useActionHandlers } from './useActionHandlers';
-interface UseListingDataProps<T> {
-  searchIndex: SearchIndex;
+interface UseListingDataProps<T, SI extends SearchIndex> {
+  searchIndex: SI;
+  transform: (data: SearchResponse<SearchIndexValue<SI>>) => T[];
   baseFilter?: string;
   pageSize?: number;
   filterKeys: string[];
@@ -36,15 +43,19 @@ interface UseListingDataProps<T> {
   onCustomEntityClick?: (entity: T) => void;
   onCustomAddClick?: () => void;
   searchKey?: string;
+  /** Run the search as a natural-language query while the NLQ toggle is on. */
+  enableNlq?: boolean;
 }
 
 export const useListingData = <
-  T extends { id: string; name?: string; fullyQualifiedName?: string }
+  T extends { id: string; name?: string; fullyQualifiedName?: string },
+  SI extends SearchIndex
 >(
-  props: UseListingDataProps<T>
+  props: UseListingDataProps<T, SI>
 ): ListingData<T> => {
   const {
     searchIndex,
+    transform,
     baseFilter = '',
     pageSize = 10,
     filterKeys,
@@ -57,7 +68,13 @@ export const useListingData = <
     onCustomEntityClick,
     onCustomAddClick,
     searchKey,
+    enableNlq = false,
   } = props;
+
+  const isNlqActive = useSearchStore(
+    (state) => state.isNLPEnabled && state.isNLPActive
+  );
+  const useNlq = enableNlq && isNlqActive;
 
   const urlStateHook = useUrlState({
     searchKey,
@@ -77,10 +94,12 @@ export const useListingData = <
 
   const effectivePageSize = urlState.pageSize || pageSize;
 
-  const dataFetching = useDataFetching<T>({
+  const dataFetching = useDataFetching<T, SI>({
     searchIndex,
+    transform,
     baseFilter,
     pageSize: effectivePageSize,
+    useNlq,
   });
 
   const paginationState = usePaginationState({
@@ -102,7 +121,30 @@ export const useListingData = <
     onCustomAddClick,
   });
 
+  // Keep-alive keeps a visited listing mounted while another is on screen, and
+  // every listing reads the same `q` param — so without this a hidden page
+  // re-queries its own index on each keystroke and throws the answer away.
+  const isRouteVisible = useIsRouteVisible();
+  const lastFetchedRef = useRef<string>('');
+
   useEffect(() => {
+    if (!isRouteVisible) {
+      return;
+    }
+    // Becoming visible must not refetch what is already on screen, so compare
+    // against what was actually last fetched rather than just reacting to the
+    // visibility flip.
+    const signature = JSON.stringify([
+      urlState.currentPage,
+      urlState.searchQuery,
+      urlState.filters,
+      urlState.pageSize,
+    ]);
+    if (signature === lastFetchedRef.current) {
+      return;
+    }
+    lastFetchedRef.current = signature;
+
     dataFetching.searchEntities(
       urlState.currentPage,
       urlState.searchQuery,
@@ -113,6 +155,9 @@ export const useListingData = <
     urlState.searchQuery,
     urlState.filters,
     urlState.pageSize,
+    // `useNlq` is left out on purpose: flipping the NLQ toggle must not run a
+    // query by itself. As on Explore, NLQ runs when the user submits.
+    isRouteVisible,
     // Note: dataFetching.searchEntities intentionally excluded - we always want the latest version
   ]);
 
@@ -198,6 +243,7 @@ export const useListingData = <
     actionHandlers,
     filterOptions: {},
     aggregations: getAggregations(dataFetching.aggregations || {}),
+    baseFilter,
     handleSearchChange,
     handleFilterChange,
     handleClearAll: resetAll,

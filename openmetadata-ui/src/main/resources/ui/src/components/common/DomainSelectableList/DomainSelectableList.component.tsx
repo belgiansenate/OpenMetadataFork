@@ -10,16 +10,17 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-import { TreeSelectTriggerRenderProps } from '@openmetadata/ui-core-components';
-import { MouseEvent, useCallback } from 'react';
+import {
+  ButtonUtility,
+  TreeSelectTriggerRenderProps,
+} from '@openmetadata/ui-core-components';
+import { Edit01 } from '@openmetadata/ui-core-components/icons';
+import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ReactComponent as EditIcon } from '../../../assets/svg/edit-new.svg';
-import { DE_ACTIVE_COLOR } from '../../../constants/constants';
 import { Domain } from '../../../generated/entity/domains/domain';
-import { EntityReference } from '../../../generated/entity/type';
 import { useGenericContext } from '../../Customization/GenericProvider/GenericContext';
 import DomainSelect from '../DomainSelect/DomainSelect';
-import { EditIconButton } from '../IconButtons/EditIconButton';
+import { DomainSelectTrigger } from '../DomainSelect/DomainSelectTrigger';
 import { DomainSelectableListProps } from './DomainSelectableList.interface';
 
 /**
@@ -41,6 +42,11 @@ const DomainSelectableList = ({
   selectedDomain,
   showAllDomains,
   isClearable,
+  className,
+  fullWidthTrigger,
+  placement,
+  offset,
+  popoverClassName,
   'data-testid': dataTestId = 'domain-selectable-tree',
 }: DomainSelectableListProps) => {
   const { t } = useTranslation();
@@ -63,30 +69,26 @@ const DomainSelectableList = ({
       }
 
       const trigger = children ?? (
-        <EditIconButton
-          newLook
+        <ButtonUtility
           data-testid="add-domain"
-          disabled={!hasPermission || disabled}
-          icon={<EditIcon color={DE_ACTIVE_COLOR} width="12px" />}
-          size="small"
-          title={t('label.edit-entity', { entity: t('label.domain-plural') })}
+          icon={Edit01}
+          isDisabled={!hasPermission || disabled}
+          tooltip={t('label.edit-entity', { entity: t('label.domain-plural') })}
         />
       );
 
-      // Capture the click before a child's own `stopPropagation` can swallow it,
-      // so any trigger reliably opens the picker.
+      // Toggle on pointerdown, not click: the entity header re-renders while a
+      // PATCH settles, and a re-render that replaces the trigger's DOM node
+      // between mousedown and mouseup makes the browser drop the `click`
+      // entirely — the press then does nothing at all. pointerdown lands before
+      // any of that. The click is still captured (before a child's own
+      // `stopPropagation` can swallow it) so it stays off ancestor handlers, and
+      // a keyboard-synthesized click (`detail === 0`, no preceding pointerdown)
+      // still opens the picker.
       return (
-        <span
-          role="presentation"
-          onClickCapture={(e: MouseEvent<HTMLSpanElement>) => {
-            if (disabled) {
-              return;
-            }
-            e.stopPropagation();
-            toggle();
-          }}>
+        <DomainSelectTrigger disabled={disabled} toggle={toggle}>
           {trigger}
-        </span>
+        </DomainSelectTrigger>
       );
     },
     [children, isVersionView, hasPermission, disabled, t]
@@ -94,23 +96,24 @@ const DomainSelectableList = ({
 
   return (
     <DomainSelect
+      className={className}
       data-testid={dataTestId}
       disabled={disabled}
+      fullWidthTrigger={fullWidthTrigger}
       hasPermission={hasPermission}
       isClearable={isClearable}
       isOpen={popoverProps?.open}
       multiple={multiple}
+      offset={offset}
+      placement={placement}
+      popoverClassName={popoverClassName}
       renderTrigger={renderTrigger}
       restrictedDomains={restrictedDomains}
       selectedDomain={selectedDomain}
       showAllDomains={showAllDomains}
       triggerVariant="button"
       onOpenChange={handleOpenChange}
-      onUpdate={
-        onUpdate as (
-          domain: EntityReference | EntityReference[] | undefined
-        ) => Promise<void>
-      }
+      onUpdate={onUpdate}
     />
   );
 };

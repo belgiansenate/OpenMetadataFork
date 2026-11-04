@@ -17,7 +17,7 @@ import { AuthProvider } from '../../generated/settings/settings';
 import connectionsRouterClassBase from '../../utils/ConnectionsRouterClassBase';
 import SettingsRouter from './SettingsRouter';
 
-jest.mock('../../pages/AddNotificationPage/AddNotificationPage', () => ({
+jest.mock('../../pages/AddObservabilityPage/AddObservabilityPage', () => ({
   __esModule: true,
   default: jest.fn().mockReturnValue(<div>AddNotificationPage</div>),
 }));
@@ -99,6 +99,26 @@ jest.mock('../../pages/GlobalSettingPage/GlobalSettingPage', () => ({
   __esModule: true,
   default: jest.fn().mockReturnValue(<div>GlobalSettingPage</div>),
 }));
+
+jest.mock(
+  '../../pages/platform/settings/SystemAnnouncementsPage/SystemAnnouncementsPage',
+  () => ({
+    __esModule: true,
+    default: jest.fn().mockReturnValue(<div>SystemAnnouncementsPage</div>),
+  })
+);
+
+jest.mock(
+  '../../pages/platform/settings/SystemAnnouncementFormPage/SystemAnnouncementFormPage',
+  () => ({
+    __esModule: true,
+    default: jest
+      .fn()
+      .mockImplementation(({ mode }: { mode: string }) => (
+        <div>{`SystemAnnouncementFormPage:${mode}`}</div>
+      )),
+  })
+);
 
 jest.mock('../../pages/NotificationListPage/NotificationListPage', () => ({
   __esModule: true,
@@ -355,6 +375,29 @@ describe('SettingsRouter', () => {
     expect(await screen.findByText('AddNotificationPage')).toBeInTheDocument();
   });
 
+  it('should render the system announcements list for its settings route', async () => {
+    renderAtSettingsPath(ROUTES.SETTINGS_ANNOUNCEMENTS);
+
+    expect(
+      await screen.findByText('SystemAnnouncementsPage')
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [ROUTES.SETTINGS_ANNOUNCEMENT_ADD, 'create'],
+    [ROUTES.SETTINGS_ANNOUNCEMENT_EDIT.replace(':id', 'a1'), 'edit'],
+    [ROUTES.SETTINGS_ANNOUNCEMENT_DUPLICATE.replace(':id', 'a1'), 'duplicate'],
+  ])(
+    'should open the announcement form at %s in %s mode',
+    async (path, mode) => {
+      renderAtSettingsPath(path);
+
+      expect(
+        await screen.findByText(`SystemAnnouncementFormPage:${mode}`)
+      ).toBeInTheDocument();
+    }
+  );
+
   it('should render PersonaPage component for persona list route', async () => {
     renderAtSettingsPath('/settings/persona');
 
@@ -513,4 +556,15 @@ describe('SettingsRouter login configuration routes', () => {
       expect(screen.queryByText('NotFound')).not.toBeInTheDocument();
     }
   );
+});
+
+describe('SettingsRouter unknown routes', () => {
+  // Bots live at /bots/<name>, so /settings/bots/<name> matches no settings
+  // route and used to render an empty page.
+  it('treats an unknown settings path as not found', async () => {
+    renderAt('/settings/bots/ingestion-bot');
+
+    expect(await screen.findByText('NotFound')).toBeInTheDocument();
+    expect(screen.queryByText('BotsPageV1')).not.toBeInTheDocument();
+  });
 });

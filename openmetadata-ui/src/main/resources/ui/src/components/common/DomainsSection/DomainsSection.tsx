@@ -16,6 +16,7 @@ import { compare } from 'fast-json-patch';
 import { get, isEmpty } from 'lodash';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { NO_DATA_PLACEHOLDER_CLASS_NAME } from '../../../constants/EntitySummaryPanelUtils.constant';
 import { EntityType } from '../../../enums/entity.enum';
 import { EntityReference } from '../../../generated/entity/type';
 import { useEntityRules } from '../../../hooks/useEntityRules';
@@ -23,6 +24,7 @@ import {
   getAPIfromSource,
   getEntityAPIfromSource,
 } from '../../../utils/Assets/AssetsUtils';
+import { getDomainsContentKey } from '../../../utils/DomainSyncUtils';
 import { showErrorToast, showSuccessToast } from '../../../utils/ToastUtils';
 import { AssetsUnion } from '../../DataAssets/AssetsSelectionModal/AssetSelectionModal.interface';
 import DomainSelectableList from '../DomainSelectableList/DomainSelectableList.component';
@@ -68,21 +70,27 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
       }
     }
 
-    setActiveDomains((prev) => {
-      if (
-        prev.length === nextActiveDomains.length &&
-        prev.every((item, index) => item === nextActiveDomains[index])
-      ) {
-        return prev;
-      }
-
-      return nextActiveDomains;
-    });
+    // Shared content key, so this cannot drift from the other domain surfaces.
+    setActiveDomains((prev) =>
+      getDomainsContentKey(prev) === getDomainsContentKey(nextActiveDomains)
+        ? prev
+        : nextActiveDomains
+    );
   }, [domains]);
 
   const updateActiveDomains = (
-    entityDomains: EntityReference | EntityReference[] | Record<string, never>
+    entityDomains:
+      | EntityReference
+      | EntityReference[]
+      | Record<string, never>
+      | undefined
   ) => {
+    if (!entityDomains) {
+      setActiveDomains([]);
+
+      return;
+    }
+
     if (Array.isArray(entityDomains)) {
       setActiveDomains(entityDomains);
 
@@ -96,7 +104,9 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
   };
 
   const handleDomainSave = useCallback(
-    async (selectedDomain: EntityReference | EntityReference[]) => {
+    async (selectedDomain: EntityReference | EntityReference[] | undefined) => {
+      // A cleared single-select arrives as `undefined`.
+      const nextDomains = selectedDomain ?? [];
       if (!entityId || !entityType || !entityFqn) {
         showErrorToast(t('message.entity-details-required'));
 
@@ -120,12 +130,12 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
         }
 
         let domainsToSave: EntityReference[];
-        if (Array.isArray(selectedDomain)) {
-          domainsToSave = selectedDomain;
-        } else if (isEmpty(selectedDomain)) {
+        if (Array.isArray(nextDomains)) {
+          domainsToSave = nextDomains;
+        } else if (isEmpty(nextDomains)) {
           domainsToSave = [];
         } else {
-          domainsToSave = [selectedDomain];
+          domainsToSave = [nextDomains];
         }
 
         // Create JSON patch
@@ -193,9 +203,7 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
         <DomainSelectableList
           hasPermission={hasPermission}
           multiple={entityRules.canAddMultipleDomains}
-          overlayClassName="domain-popover"
           selectedDomain={activeDomains}
-          wrapInButton={false}
           onUpdate={handleDomainSave}
         />
       )
@@ -206,7 +214,7 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
     return (
       <div className="domains-section">
         <div className="domains-header">
-          <Typography className="domains-title">
+          <Typography size="text-xs" weight="semibold">
             {t('label.domain-plural')}
           </Typography>
         </div>
@@ -219,17 +227,17 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
     return (
       <div className="domains-section">
         <div className="domains-header">
-          <Typography className="domains-title">
+          <Typography size="text-xs" weight="semibold">
             {t('label.domain-plural')}
           </Typography>
           {selectableList}
         </div>
         <div className="domains-content">
-          <span className="no-data-placeholder">
+          <Typography className={NO_DATA_PLACEHOLDER_CLASS_NAME}>
             {t('label.no-entity-assigned', {
               entity: t('label.domain-plural'),
             })}
-          </span>
+          </Typography>
         </div>
       </div>
     );
@@ -238,7 +246,7 @@ const DomainsSection: React.FC<DomainsSectionProps> = ({
   return (
     <div className="domains-section">
       <div className="domains-header">
-        <Typography className="domains-title">
+        <Typography size="text-xs" weight="semibold">
           {t('label.domain-plural')}
         </Typography>
         {selectableList}
