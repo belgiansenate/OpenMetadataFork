@@ -13,7 +13,7 @@
 
 package org.openmetadata.service.search;
 
-/** Bounds shared by the ElasticSearch and OpenSearch inherited-field child propagations. */
+/** Bounds shared by the ElasticSearch and OpenSearch by-query writes. */
 public final class SearchPropagationLimits {
 
   private SearchPropagationLimits() {}
@@ -28,4 +28,13 @@ public final class SearchPropagationLimits {
    * completion time for cluster stability is the right way round.
    */
   public static final float REQUESTS_PER_SECOND = 2000f;
+
+  /**
+   * Keep-alive of the scroll behind every update-by-query, delete-by-query and reindex. A user
+   * without the cluster-level {@code indices:data/read/scroll/clear} permission cannot have the
+   * engine clear these contexts, so each lives until this expires: 1 minute outlives any batch and
+   * keeps a shared cluster under {@code search.max_open_scroll_context}
+   * (ADR:2026-11-04-by-query-writes-name-a-one-minute-scroll-keep-alive).
+   */
+  public static final String BY_QUERY_SCROLL_KEEP_ALIVE = "1m";
 }
