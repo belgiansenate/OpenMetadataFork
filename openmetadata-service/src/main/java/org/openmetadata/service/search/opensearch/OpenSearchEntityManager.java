@@ -73,6 +73,7 @@ import os.org.opensearch.client.opensearch._types.OpenSearchException;
 import os.org.opensearch.client.opensearch._types.Refresh;
 import os.org.opensearch.client.opensearch._types.Result;
 import os.org.opensearch.client.opensearch._types.SlicesCalculation;
+import os.org.opensearch.client.opensearch._types.Time;
 import os.org.opensearch.client.opensearch._types.query_dsl.BoolQuery;
 import os.org.opensearch.client.opensearch._types.query_dsl.Operator;
 import os.org.opensearch.client.opensearch._types.query_dsl.Query;
@@ -105,6 +106,8 @@ public class OpenSearchEntityManager implements EntityManagementClient {
   // Cap on how long a realtime bulk write blocks the (post-commit, request-thread) caller so a
   // stalled search backend can't hold the thread indefinitely; the async result is still handled.
   private static final long BULK_AWAIT_TIMEOUT_SECONDS = 30;
+  private static final Time SCROLL_KEEP_ALIVE =
+      Time.of(t -> t.time(SearchPropagationLimits.BY_QUERY_SCROLL_KEEP_ALIVE));
 
   public OpenSearchEntityManager(OpenSearchClient client) {
     this.client = client;
@@ -272,6 +275,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         client.deleteByQuery(
             d ->
                 d.index(indexNames)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(q -> q.bool(boolQueryBuilder.build()))
                     .refresh(Refresh.True));
 
@@ -301,6 +305,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         client.deleteByQuery(
             d ->
                 d.index(indexName)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(
                         q ->
                             q.prefix(
@@ -335,6 +340,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         client.deleteByQuery(
             d ->
                 d.index(indexName)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(
                         q ->
                             q.script(
@@ -422,6 +428,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         UpdateByQueryRequest.of(
             u ->
                 u.index(indexNames)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(q -> q.bool(boolQueryBuilder.build()))
                     .conflicts(Conflicts.Proceed)
                     .script(
@@ -622,6 +629,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
     return UpdateByQueryRequest.of(
         u ->
             u.index(indexNames)
+                .scroll(SCROLL_KEEP_ALIVE)
                 .query(exactFieldQuery(fieldAndValue))
                 .conflicts(Conflicts.Proceed)
                 .waitForCompletion(false)
@@ -661,6 +669,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         UpdateByQueryRequest.of(
             u ->
                 u.index(indexNames)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(anyOfFieldQuery(field, values))
                     .conflicts(Conflicts.Proceed)
                     .script(
@@ -753,6 +762,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
     client.updateByQuery(
         u ->
             u.index(indexNames)
+                .scroll(SCROLL_KEEP_ALIVE)
                 .query(q -> q.bool(b -> b.should(matches).minimumShouldMatch("1")))
                 .conflicts(Conflicts.Proceed)
                 .waitForCompletion(false)
@@ -841,6 +851,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               u ->
                   u.index(indexName)
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(exactFieldQuery(fieldAndValue))
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -885,6 +896,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           r ->
               r.source(s -> s.index(sourceIndices).query(q -> q.ids(ids -> ids.values(queryIDs))))
                   .dest(d -> d.index(destinationIndex).pipeline(pipelineName))
+                  .scroll(SCROLL_KEEP_ALIVE)
                   .refresh(Refresh.True));
 
       LOG.info("Reindex {} entities of type {} to vector index", entityIds.size(), entityType);
@@ -909,6 +921,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getIndexOrAliasName(indexName))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(prefixQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -975,6 +988,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
         UpdateByQueryRequest.of(
             u ->
                 u.index(indexName)
+                    .scroll(SCROLL_KEEP_ALIVE)
                     .query(lineageQuery)
                     .conflicts(Conflicts.Proceed)
                     .script(
@@ -1020,7 +1034,8 @@ public class OpenSearchEntityManager implements EntityManagementClient {
 
     // Execute delete-by-query with refresh
     DeleteByQueryResponse response =
-        client.deleteByQuery(d -> d.index(index).query(query).refresh(Refresh.True));
+        client.deleteByQuery(
+            d -> d.index(index).scroll(SCROLL_KEEP_ALIVE).query(query).refresh(Refresh.True));
 
     LOG.info(
         "DeleteByQuery response from OS - Deleted: {}, Failures: {}",
@@ -1074,7 +1089,12 @@ public class OpenSearchEntityManager implements EntityManagementClient {
 
     // Execute delete-by-query with refresh
     DeleteByQueryResponse response =
-        client.deleteByQuery(d -> d.index(index).query(combinedQuery).refresh(Refresh.True));
+        client.deleteByQuery(
+            d ->
+                d.index(index)
+                    .scroll(SCROLL_KEEP_ALIVE)
+                    .query(combinedQuery)
+                    .refresh(Refresh.True));
 
     LOG.info(
         "DeleteByRangeAndTerm response from OS - Deleted: {}, Failures: {}",
@@ -1140,6 +1160,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
     return UpdateByQueryRequest.of(
         req ->
             req.index(Entity.getSearchRepository().getIndexOrAliasName(indexName))
+                .scroll(SCROLL_KEEP_ALIVE)
                 .query(buildLineageColumnsQuery(affectedColumns))
                 .conflicts(Conflicts.Proceed)
                 .script(
@@ -1223,6 +1244,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getIndexOrAliasName(indexName))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(prefixQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1280,6 +1302,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getIndexOrAliasName(indexName))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(prefixQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1341,6 +1364,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getIndexOrAliasName(GLOBAL_SEARCH_ALIAS))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(termQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1416,6 +1440,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
                               .getWriteFanoutTargets(
                                   Entity.getSearchRepository()
                                       .getIndexOrAliasName(GLOBAL_SEARCH_ALIAS)))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(termQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1493,6 +1518,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
                               .getWriteFanoutTargets(
                                   Entity.getSearchRepository()
                                       .getIndexOrAliasName(GLOBAL_SEARCH_ALIAS)))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(idsQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1559,6 +1585,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getWriteFanoutTargets(domainIndexName))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(combinedQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
@@ -1615,6 +1642,7 @@ public class OpenSearchEntityManager implements EntityManagementClient {
           UpdateByQueryRequest.of(
               req ->
                   req.index(Entity.getSearchRepository().getWriteFanoutTargets(indexName))
+                      .scroll(SCROLL_KEEP_ALIVE)
                       .query(matchingDomainQuery)
                       .conflicts(Conflicts.Proceed)
                       .script(
